@@ -1,0 +1,7 @@
+{
+  "name": "massa - Status & Suara",
+  "description": "A lightweight social platform focused on text, voice, and photo statuses without the noise of videos or complex algorithms.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
