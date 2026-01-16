@@ -13,7 +13,7 @@ const Footer: React.FC<FooterProps> = ({ theme, language }) => {
   const currentYear = new Date().getFullYear();
 
   const links = [
-    { label: 'massa Terms', path: '/terms' },
+    { label: 'MASSA Terms', path: '/terms' },
     { label: 'Privacy Policy', path: '/privacy' },
     { label: 'Cookies Policy', path: '/cookies' },
     { label: 'Report a problem', path: '/report' },

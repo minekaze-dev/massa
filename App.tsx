@@ -31,16 +31,21 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const init = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
-        if (profile) {
-          setUser(profile);
-          fetchUserMetadata(session.user.id);
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
+          if (profile) {
+            setUser(profile);
+            fetchUserMetadata(session.user.id);
+          }
         }
+        await fetchPosts();
+      } catch (err) {
+        console.error("Initialization error:", err);
+      } finally {
+        setLoading(false);
       }
-      await fetchPosts();
-      setLoading(false);
     };
     init();
 
@@ -63,35 +68,45 @@ const App: React.FC = () => {
   }, []);
 
   const fetchPosts = async () => {
-    const { data, error } = await supabase
-      .from('posts')
-      .select('*, users(*), replies(*)')
-      .order('created_at', { ascending: false });
-    
-    if (!error && data) {
-      const transformed = data.map((p: any) => ({
-        ...p,
-        userId: p.user_id,
-        user: p.users,
-        createdAt: new Date(p.created_at).getTime(),
-        audioUrl: p.audio_url,
-        imageUrl: p.image_url,
-        isPublished: p.is_published,
-        replies: p.replies || []
-      }));
-      setPosts(transformed);
+    try {
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, users(*), replies(*)')
+        .order('created_at', { ascending: false });
+      
+      if (!error && data) {
+        const transformed = data.map((p: any) => ({
+          ...p,
+          userId: p.user_id,
+          user: p.users || { id: p.user_id, name: 'User', handle: '@user', avatar: 'https://picsum.photos/seed/user/100/100' },
+          createdAt: new Date(p.created_at).getTime(),
+          audioUrl: p.audio_url,
+          imageUrl: p.image_url,
+          isPublished: p.is_published,
+          replies: p.replies || [],
+          likes: p.likes || 0,
+          hasLiked: false
+        }));
+        setPosts(transformed);
+      }
+    } catch (err) {
+      console.error("Fetch posts error:", err);
     }
   };
 
   const fetchUserMetadata = async (userId: string) => {
-    const [saved, followed, connected] = await Promise.all([
-      supabase.from('saved_posts').select('post_id').eq('user_id', userId),
-      supabase.from('followed_authors').select('author_id').eq('user_id', userId),
-      supabase.from('connections').select('connected_user_id').eq('user_id', userId)
-    ]);
-    if (saved.data) setSavedPostIds(saved.data.map(i => i.post_id));
-    if (followed.data) setFollowedAuthorIds(followed.data.map(i => i.author_id));
-    if (connected.data) setConnectedUserIds(connected.data.map(i => i.connected_user_id));
+    try {
+      const [saved, followed, connected] = await Promise.all([
+        supabase.from('saved_posts').select('post_id').eq('user_id', userId),
+        supabase.from('followed_authors').select('author_id').eq('user_id', userId),
+        supabase.from('connections').select('connected_user_id').eq('user_id', userId)
+      ]);
+      if (saved.data) setSavedPostIds(saved.data.map(i => i.post_id));
+      if (followed.data) setFollowedAuthorIds(followed.data.map(i => i.author_id));
+      if (connected.data) setConnectedUserIds(connected.data.map(i => i.connected_user_id));
+    } catch (err) {
+      console.error("Fetch metadata error:", err);
+    }
   };
 
   useEffect(() => {
@@ -146,15 +161,16 @@ const App: React.FC = () => {
   };
 
   const handleAddPost = async (newPost: Post) => {
+    if (!user) return;
     const { error } = await supabase.from('posts').insert({
-      user_id: newPost.userId,
+      user_id: user.id,
       type: newPost.type,
       duration: newPost.duration,
       content: newPost.content,
       title: newPost.title,
       audio_url: newPost.audioUrl,
       image_url: newPost.imageUrl,
-      is_published: newPost.isPublished
+      is_published: newPost.isPublished ?? true
     });
     if (!error) fetchPosts();
   };
@@ -194,7 +210,12 @@ const App: React.FC = () => {
     if (!error) fetchPosts();
   };
 
-  if (loading) return <div className="min-h-screen flex items-center justify-center bg-[#FAFAF8] dark:bg-[#1A1A1A] text-indigo-500 font-bold uppercase tracking-widest animate-pulse">Memuat Semesta...</div>;
+  if (loading) return (
+    <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAFAF8] dark:bg-[#1A1A1A]">
+      <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-600 rounded-full animate-spin mb-4" />
+      <div className="text-indigo-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Memuat Semesta...</div>
+    </div>
+  );
 
   return (
     <Router>
