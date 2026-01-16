@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Header from './components/Header';
 import BottomNav from './components/BottomNav';
@@ -29,7 +29,67 @@ const App: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  const fetchProfile = async (id: string, metadata?: any) => {
+  const fetchUserMetadata = useCallback(async (userId: string) => {
+    try {
+      const [saved, followed, connected] = await Promise.all([
+        supabase.from('saved_posts').select('post_id').eq('user_id', userId),
+        supabase.from('followed_authors').select('author_id').eq('user_id', userId),
+        supabase.from('connections').select('connected_user_id').eq('user_id', userId)
+      ]);
+      if (saved.data) setSavedPostIds(saved.data.map(i => i.post_id));
+      if (followed.data) setFollowedAuthorIds(followed.data.map(i => i.author_id));
+      if (connected.data) setConnectedUserIds(connected.data.map(i => i.connected_user_id));
+    } catch (err) {
+      console.warn("Metadata fetch warning:", err);
+    }
+  }, []);
+
+  const fetchPosts = useCallback(async () => {
+    try {
+      // Disambiguate the relationship by specifying 'users!user_id'
+      const { data, error } = await supabase
+        .from('posts')
+        .select('*, users!user_id(*)')
+        .order('created_at', { ascending: false });
+      
+      if (error) {
+        console.error("Supabase query error:", error.message || error);
+        return;
+      }
+
+      if (data) {
+        // Fetch replies separately for simpler schema dependency
+        const { data: repliesData } = await supabase.from('replies').select('*');
+
+        const transformed = data.map((p: any) => {
+          const userData = Array.isArray(p.users) ? p.users[0] : p.users;
+          const postReplies = (repliesData || []).filter((r: any) => r.post_id === p.id);
+          
+          return {
+            id: p.id,
+            userId: p.user_id,
+            user: userData || { id: p.user_id, name: 'Anonymous', handle: '@anon', avatar: 'https://picsum.photos/seed/anon/100/100' },
+            type: p.type as PostType,
+            duration: p.duration as PostDuration,
+            createdAt: new Date(p.created_at).getTime(),
+            content: p.content,
+            title: p.title,
+            audioUrl: p.audio_url,
+            imageUrl: p.image_url,
+            isPublished: p.is_published,
+            replies: postReplies,
+            likes: p.likes || 0,
+            hasLiked: false
+          };
+        });
+        setPosts(transformed);
+      }
+    } catch (err) {
+      console.error("Fetch posts system error:", err);
+    }
+  }, []);
+
+  const fetchProfile = useCallback(async (id: string, metadata?: any) => {
     try {
       let { data: profile, error: fetchError } = await supabase
         .from('users')
@@ -57,33 +117,41 @@ const App: React.FC = () => {
       
       if (profile) {
         setUser(profile);
-        fetchUserMetadata(id);
+        await fetchUserMetadata(id);
       }
     } catch (err) {
       console.error("Profile fetch error:", err);
     }
-  };
+  }, [fetchUserMetadata]);
 
   useEffect(() => {
+    let mounted = true;
+
     const init = async () => {
+      setLoading(true);
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.user) {
+        if (session?.user && mounted) {
           await fetchProfile(session.user.id, session.user.user_metadata);
         }
-        await fetchPosts();
+        if (mounted) {
+          await fetchPosts();
+        }
       } catch (err) {
-        console.error("Initialization error:", err);
+        console.error("Critical Init error:", err);
       } finally {
-        setLoading(false);
+        if (mounted) {
+          setLoading(false); // Always stop loading
+        }
       }
     };
+
     init();
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (session?.user) {
+      if (session?.user && mounted) {
         await fetchProfile(session.user.id, session.user.user_metadata);
-      } else {
+      } else if (mounted) {
         setUser(null);
         setSavedPostIds([]);
         setFollowedAuthorIds([]);
@@ -91,54 +159,11 @@ const App: React.FC = () => {
       }
     });
 
-    return () => authListener.subscription.unsubscribe();
-  }, []);
-
-  const fetchPosts = async () => {
-    try {
-      const { data, error } = await supabase
-        .from('posts')
-        .select('*, users(*), replies(*)')
-        .order('created_at', { ascending: false });
-      
-      if (!error && data) {
-        const transformed = data.map((p: any) => ({
-          id: p.id,
-          userId: p.user_id,
-          user: p.users || { id: p.user_id, name: 'Anonymous', handle: '@anon', avatar: 'https://picsum.photos/seed/anon/100/100' },
-          type: p.type as PostType,
-          duration: p.duration as PostDuration,
-          createdAt: new Date(p.created_at).getTime(),
-          content: p.content,
-          title: p.title,
-          audioUrl: p.audio_url,
-          imageUrl: p.image_url,
-          isPublished: p.is_published,
-          replies: p.replies || [],
-          likes: p.likes || 0,
-          hasLiked: false // Logic like individu bisa ditambahkan jika ada tabel post_likes
-        }));
-        setPosts(transformed);
-      }
-    } catch (err) {
-      console.error("Fetch posts error:", err);
-    }
-  };
-
-  const fetchUserMetadata = async (userId: string) => {
-    try {
-      const [saved, followed, connected] = await Promise.all([
-        supabase.from('saved_posts').select('post_id').eq('user_id', userId),
-        supabase.from('followed_authors').select('author_id').eq('user_id', userId),
-        supabase.from('connections').select('connected_user_id').eq('user_id', userId)
-      ]);
-      if (saved.data) setSavedPostIds(saved.data.map(i => i.post_id));
-      if (followed.data) setFollowedAuthorIds(followed.data.map(i => i.author_id));
-      if (connected.data) setConnectedUserIds(connected.data.map(i => i.connected_user_id));
-    } catch (err) {
-      console.error("Fetch metadata error:", err);
-    }
-  };
+    return () => {
+      mounted = false;
+      authListener.subscription.unsubscribe();
+    };
+  }, [fetchProfile, fetchPosts]);
 
   useEffect(() => {
     localStorage.setItem('statur-theme', theme);
@@ -149,18 +174,22 @@ const App: React.FC = () => {
 
   const handleUpdateUser = async (updatedUser: User) => {
     if (!user) return;
-    const { error } = await supabase.from('users').update({
-      name: updatedUser.name,
-      handle: updatedUser.handle,
-      avatar: updatedUser.avatar,
-      last_handle_update: new Date().toISOString()
-    }).eq('id', user.id);
-    
-    if (!error) {
-      setUser(updatedUser);
-      await fetchPosts();
-    } else {
-      console.error("Update user error:", error);
+    try {
+      const { error } = await supabase.from('users').update({
+        name: updatedUser.name,
+        handle: updatedUser.handle,
+        avatar: updatedUser.avatar,
+        last_handle_update: new Date().toISOString()
+      }).eq('id', user.id);
+      
+      if (!error) {
+        setUser(updatedUser);
+        await fetchPosts();
+      } else {
+        console.error("Update profile DB error:", error.message);
+      }
+    } catch (err) {
+      console.error("Update profile catch error:", err);
     }
   };
 
@@ -202,18 +231,25 @@ const App: React.FC = () => {
 
   const handleAddPost = async (newPost: Partial<Post>) => {
     if (!user) return;
-    const { error } = await supabase.from('posts').insert({
-      user_id: user.id,
-      type: newPost.type,
-      duration: newPost.duration,
-      content: newPost.content,
-      title: newPost.title,
-      audio_url: newPost.audioUrl,
-      image_url: newPost.imageUrl,
-      is_published: newPost.isPublished ?? true
-    });
-    if (!error) await fetchPosts();
-    else console.error("Add post error:", error);
+    try {
+      const { error } = await supabase.from('posts').insert({
+        user_id: user.id,
+        type: newPost.type,
+        duration: newPost.duration,
+        content: newPost.content,
+        title: newPost.title,
+        audio_url: newPost.audioUrl,
+        image_url: newPost.imageUrl,
+        is_published: newPost.isPublished ?? true
+      });
+      if (!error) {
+        await fetchPosts();
+      } else {
+        console.error("Post error:", error.message);
+      }
+    } catch (err) {
+      console.error("Post catch error:", err);
+    }
   };
 
   const handleUpdatePost = async (updatedPost: Post) => {
@@ -253,8 +289,8 @@ const App: React.FC = () => {
 
   if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAFAF8] dark:bg-[#1A1A1A]">
-      <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-600 rounded-full animate-spin mb-4" />
-      <div className="text-indigo-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Menghubungkan Semesta...</div>
+      <div className="w-12 h-12 border-[3px] border-indigo-500/20 border-t-indigo-600 rounded-full animate-spin mb-6" />
+      <div className="text-indigo-500 font-black uppercase tracking-[0.3em] text-[10px] animate-pulse">Menghubungkan Semesta...</div>
     </div>
   );
 
