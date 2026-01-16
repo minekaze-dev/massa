@@ -15,7 +15,7 @@ import PrivacyPage from './pages/PrivacyPage';
 import CookiesPage from './pages/CookiesPage';
 import ReportPage from './pages/ReportPage';
 import AuthModal from './components/AuthModal';
-import { Theme, User, Post, Language, PostType } from './types';
+import { Theme, User, Post, Language, PostType, PostDuration } from './types';
 import { supabase } from './supabaseClient';
 
 const App: React.FC = () => {
@@ -37,13 +37,12 @@ const App: React.FC = () => {
         .eq('id', id)
         .maybeSingle();
       
-      // Jika profil tidak ditemukan, buat profil baru di tabel users
       if (!profile && !fetchError) {
         const newProfile = {
           id: id,
           name: metadata?.name || 'User Baru',
           handle: metadata?.handle || `@user_${id.slice(0, 5)}`,
-          avatar: `https://picsum.photos/seed/${id}/100/100`,
+          avatar: metadata?.avatar || `https://picsum.photos/seed/${id}/100/100`,
           last_handle_update: new Date().toISOString()
         };
 
@@ -53,11 +52,7 @@ const App: React.FC = () => {
           .select()
           .single();
         
-        if (insertError) {
-          console.error("Error creating profile:", insertError);
-        } else {
-          profile = insertedProfile;
-        }
+        if (!insertError) profile = insertedProfile;
       }
       
       if (profile) {
@@ -108,16 +103,20 @@ const App: React.FC = () => {
       
       if (!error && data) {
         const transformed = data.map((p: any) => ({
-          ...p,
+          id: p.id,
           userId: p.user_id,
           user: p.users || { id: p.user_id, name: 'Anonymous', handle: '@anon', avatar: 'https://picsum.photos/seed/anon/100/100' },
+          type: p.type as PostType,
+          duration: p.duration as PostDuration,
           createdAt: new Date(p.created_at).getTime(),
+          content: p.content,
+          title: p.title,
           audioUrl: p.audio_url,
           imageUrl: p.image_url,
           isPublished: p.is_published,
           replies: p.replies || [],
           likes: p.likes || 0,
-          hasLiked: false
+          hasLiked: false // Logic like individu bisa ditambahkan jika ada tabel post_likes
         }));
         setPosts(transformed);
       }
@@ -149,16 +148,19 @@ const App: React.FC = () => {
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
   const handleUpdateUser = async (updatedUser: User) => {
-    const { error } = await supabase.from('users').upsert({
-      id: updatedUser.id,
+    if (!user) return;
+    const { error } = await supabase.from('users').update({
       name: updatedUser.name,
       handle: updatedUser.handle,
       avatar: updatedUser.avatar,
       last_handle_update: new Date().toISOString()
-    });
+    }).eq('id', user.id);
+    
     if (!error) {
       setUser(updatedUser);
-      fetchPosts();
+      await fetchPosts();
+    } else {
+      console.error("Update user error:", error);
     }
   };
 
@@ -198,7 +200,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleAddPost = async (newPost: Post) => {
+  const handleAddPost = async (newPost: Partial<Post>) => {
     if (!user) return;
     const { error } = await supabase.from('posts').insert({
       user_id: user.id,
@@ -210,22 +212,23 @@ const App: React.FC = () => {
       image_url: newPost.imageUrl,
       is_published: newPost.isPublished ?? true
     });
-    if (!error) fetchPosts();
+    if (!error) await fetchPosts();
+    else console.error("Add post error:", error);
   };
 
   const handleUpdatePost = async (updatedPost: Post) => {
-    await supabase.from('posts').update({
+    const { error } = await supabase.from('posts').update({
       title: updatedPost.title,
       content: updatedPost.content,
       image_url: updatedPost.imageUrl,
       is_published: updatedPost.isPublished
     }).eq('id', updatedPost.id);
-    fetchPosts();
+    if (!error) await fetchPosts();
   };
 
   const handleDeletePost = async (postId: string) => {
-    await supabase.from('posts').delete().eq('id', postId);
-    fetchPosts();
+    const { error } = await supabase.from('posts').delete().eq('id', postId);
+    if (!error) await fetchPosts();
   };
 
   const handleLikePost = async (postId: string) => {
@@ -245,7 +248,7 @@ const App: React.FC = () => {
       user_name: user.name,
       content
     });
-    if (!error) fetchPosts();
+    if (!error) await fetchPosts();
   };
 
   if (loading) return (

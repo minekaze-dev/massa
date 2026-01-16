@@ -6,7 +6,7 @@ import { translations } from '../translations';
 import * as Icons from '../components/Icons';
 
 interface CreatePostPageProps {
-  onPost: (post) => void;
+  onPost: (post: Partial<Post>) => void;
   user: User;
   theme: Theme;
   language: Language;
@@ -61,8 +61,11 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
       mediaRecorder.onstop = () => {
         if (audioChunksRef.current.length > 0) {
           const audioBlob = new Blob(audioChunksRef.current, { type: mediaRecorder.mimeType });
-          const url = URL.createObjectURL(audioBlob);
-          setAudioUrl(url);
+          const reader = new FileReader();
+          reader.onloadend = () => {
+             setAudioUrl(reader.result as string);
+          };
+          reader.readAsDataURL(audioBlob);
         }
         if (streamRef.current) {
           streamRef.current.getTracks().forEach(track => track.stop());
@@ -103,26 +106,20 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
     e.preventDefault();
     if (isRecording) return;
 
-    // Logic to determine post type automatically
     let derivedType = PostType.TEXT;
     if (image && audioUrl) derivedType = PostType.PHOTO_VOICE;
-    else if (image) derivedType = PostType.PHOTO_VOICE; // Reuse for photo-only posts
+    else if (image) derivedType = PostType.PHOTO_VOICE;
     else if (audioUrl && content.trim()) derivedType = PostType.TEXT_VOICE;
     else if (audioUrl) derivedType = PostType.VOICE;
 
-    const newPost: Post = {
-      id: Math.random().toString(36).substr(2, 9),
+    const newPost: Partial<Post> = {
       userId: user.id,
-      user,
       type: derivedType,
       duration,
-      createdAt: Date.now(),
       content: content.trim() || undefined,
       imageUrl: image || undefined,
       audioUrl: audioUrl || undefined,
-      likes: 0,
-      hasLiked: false,
-      replies: []
+      isPublished: true
     };
 
     onPost(newPost);
@@ -141,7 +138,6 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
 
       <form onSubmit={handleSubmit} className="space-y-6">
         <div className={`p-6 sm:p-8 rounded-[3rem] border shadow-sm transition-all ${isDark ? 'bg-[#262626] border-gray-800' : 'bg-white border-gray-100'}`}>
-          {/* Main Input Area */}
           <textarea
             placeholder={language === 'id' ? "Apa yang kamu pikirkan?" : "What's on your mind?"}
             value={content}
@@ -149,7 +145,6 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
             className={`w-full text-lg bg-transparent border-none outline-none resize-none min-h-[120px] mb-4 ${isDark ? 'text-white' : 'text-slate-900'} placeholder-gray-300 font-medium`}
           />
 
-          {/* Media Previews */}
           <div className="space-y-4 mb-4">
             {image && (
               <div className="relative w-fit group">
@@ -164,7 +159,6 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
               </div>
             )}
 
-            {/* Compact Professional Recording UI */}
             {(isRecording || audioUrl) && (
               <div className={`flex items-center gap-4 p-4 rounded-2xl border transition-all animate-in slide-in-from-left-4 duration-300 ${
                 isDark ? 'bg-gray-800/50 border-gray-700' : 'bg-indigo-50 border-indigo-100'
@@ -211,7 +205,6 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
             )}
           </div>
 
-          {/* Media Toolbar */}
           <div className={`flex items-center gap-2 pt-4 border-t ${isDark ? 'border-gray-800' : 'border-gray-50'}`}>
             <button
               type="button"
@@ -238,7 +231,6 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
           </div>
         </div>
 
-        {/* Duration Selection */}
         <div className="flex flex-col gap-3 px-2">
           <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400">{t.postDuration}</p>
           <div className={`flex p-1 rounded-full border w-fit ${isDark ? 'bg-[#262626] border-gray-800' : 'bg-gray-100 border-gray-200 shadow-sm'}`}>
@@ -265,7 +257,6 @@ const CreatePostPage: React.FC<CreatePostPageProps> = ({ onPost, user, theme, la
           </div>
         </div>
 
-        {/* Footer Actions */}
         <div className="flex items-center justify-end gap-6 pt-6">
           <button
             type="button"
