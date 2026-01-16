@@ -29,16 +29,52 @@ const App: React.FC = () => {
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [loading, setLoading] = useState(true);
 
+  const fetchProfile = async (id: string, metadata?: any) => {
+    try {
+      let { data: profile, error: fetchError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+      
+      // Jika profil tidak ditemukan, buat profil baru di tabel users
+      if (!profile && !fetchError) {
+        const newProfile = {
+          id: id,
+          name: metadata?.name || 'User Baru',
+          handle: metadata?.handle || `@user_${id.slice(0, 5)}`,
+          avatar: `https://picsum.photos/seed/${id}/100/100`,
+          last_handle_update: new Date().toISOString()
+        };
+
+        const { data: insertedProfile, error: insertError } = await supabase
+          .from('users')
+          .insert(newProfile)
+          .select()
+          .single();
+        
+        if (insertError) {
+          console.error("Error creating profile:", insertError);
+        } else {
+          profile = insertedProfile;
+        }
+      }
+      
+      if (profile) {
+        setUser(profile);
+        fetchUserMetadata(id);
+      }
+    } catch (err) {
+      console.error("Profile fetch error:", err);
+    }
+  };
+
   useEffect(() => {
     const init = async () => {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
-          if (profile) {
-            setUser(profile);
-            fetchUserMetadata(session.user.id);
-          }
+          await fetchProfile(session.user.id, session.user.user_metadata);
         }
         await fetchPosts();
       } catch (err) {
@@ -51,11 +87,7 @@ const App: React.FC = () => {
 
     const { data: authListener } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        const { data: profile } = await supabase.from('users').select('*').eq('id', session.user.id).single();
-        if (profile) {
-          setUser(profile);
-          fetchUserMetadata(session.user.id);
-        }
+        await fetchProfile(session.user.id, session.user.user_metadata);
       } else {
         setUser(null);
         setSavedPostIds([]);
@@ -78,7 +110,7 @@ const App: React.FC = () => {
         const transformed = data.map((p: any) => ({
           ...p,
           userId: p.user_id,
-          user: p.users || { id: p.user_id, name: 'User', handle: '@user', avatar: 'https://picsum.photos/seed/user/100/100' },
+          user: p.users || { id: p.user_id, name: 'Anonymous', handle: '@anon', avatar: 'https://picsum.photos/seed/anon/100/100' },
           createdAt: new Date(p.created_at).getTime(),
           audioUrl: p.audio_url,
           imageUrl: p.image_url,
@@ -117,7 +149,13 @@ const App: React.FC = () => {
   const toggleTheme = () => setTheme(prev => prev === 'light' ? 'dark' : 'light');
 
   const handleUpdateUser = async (updatedUser: User) => {
-    const { error } = await supabase.from('users').upsert(updatedUser);
+    const { error } = await supabase.from('users').upsert({
+      id: updatedUser.id,
+      name: updatedUser.name,
+      handle: updatedUser.handle,
+      avatar: updatedUser.avatar,
+      last_handle_update: new Date().toISOString()
+    });
     if (!error) {
       setUser(updatedUser);
       fetchPosts();
@@ -213,7 +251,7 @@ const App: React.FC = () => {
   if (loading) return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAFAF8] dark:bg-[#1A1A1A]">
       <div className="w-10 h-10 border-4 border-indigo-500/20 border-t-indigo-600 rounded-full animate-spin mb-4" />
-      <div className="text-indigo-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Memuat Semesta...</div>
+      <div className="text-indigo-500 font-bold uppercase tracking-widest text-[10px] animate-pulse">Menghubungkan Semesta...</div>
     </div>
   );
 
